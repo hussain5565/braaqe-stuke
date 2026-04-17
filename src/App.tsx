@@ -402,11 +402,17 @@ function Dashboard() {
             <button 
               onClick={async () => {
                 try {
-                  const res = await fetch('/api/test-quote/AAPL');
+                  const res = await fetch('/api/test');
+                  const contentType = res.headers.get("content-type");
+                  if (!contentType || !contentType.includes("application/json")) {
+                    const text = await res.text();
+                    alert(`خطأ: السيرفر لم يرسل بيانات JSON صالحة. الرد كان: ${text.substring(0, 50)}...`);
+                    return;
+                  }
                   const data = await res.json();
-                  alert(`Test Result: ${data.source} - ${data.data?.regularMarketPrice || 'No Price'}`);
+                  alert(`نتيجة الاختبار: ${data.status} - السعر: ${data.price || 'N/A'}`);
                 } catch (e: any) {
-                  alert(`Test Error: ${e.message}`);
+                  alert(`فشل اختبار الاتصال: ${e.message}`);
                 }
               }}
               className="text-[10px] font-mono border border-border-custom hover:border-accent-blue px-3 py-1 rounded-full text-text-muted"

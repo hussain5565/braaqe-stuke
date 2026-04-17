@@ -49,111 +49,44 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json());
-
-  logToFile("Registering routes...");
-  // API Route: Test Quote (direct to YF or Fallback)
-  app.get("/api/test-quote/:symbol", async (req, res) => {
-    const { symbol } = req.params;
-    try {
-      const q = await yfInstance.quote(symbol);
-      res.json({ source: 'yfInstance', data: q });
-    } catch (e: any) {
-      try {
-        const fallbackRes = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`);
-        const data: any = await fallbackRes.json();
-        res.json({ source: 'direct-fetch', data: data?.quoteResponse?.result?.[0] });
-      } catch (e2: any) {
-        res.status(500).json({ error: e.message, fallbackError: e2.message });
-      }
-    }
-  });
-
-  // Health check route
-  app.get("/api/health", (req, res) => {
-    logToFile("HEALTH CHECK CALLED");
-    res.set("Content-Type", "application/json");
-    res.json({ status: "ok", time: new Date().toISOString() });
-  });
-
-  // Logging Middleware
-  app.use((req, res, next) => {
-    if (req.url.startsWith('/api')) {
-      logToFile(`INCOMING REQUEST: ${req.method} ${req.url}`);
-    }
+  // Global API headers
+  app.use("/api", (req, res, next) => {
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    logToFile(`API REQUEST: ${req.method} ${req.url}`);
     next();
+  });
+
+  // API Route: Test quote
+  app.get("/api/test", async (req, res) => {
+    try {
+      const resp = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL`);
+      const data: any = await resp.json();
+      res.json({ status: 'connected', price: data?.quoteResponse?.result?.[0]?.regularMarketPrice });
+    } catch (e: any) {
+      res.status(500).json({ status: 'error', message: e.message });
+    }
   });
 
   // API Route: Fetch Stock Quote
   app.get("/api/quote/:symbol", async (req, res) => {
     const { symbol } = req.params;
-    console.log(`[SERVER] API Request: /api/quote/${symbol}`);
-    // Explicitly set JSON content type first
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-
-    logToFile(`>>> API CALL: quote for ${symbol}`);
-
+    logToFile(`>>> QUOTE FETCH: ${symbol}`);
     try {
-      if (symbol === 'TEST') {
-        const dummy = {
-          symbol: 'TEST',
-          regularMarketPrice: 123.45,
-          regularMarketChange: 1.25,
-          regularMarketChangePercent: 1.02,
-          currency: 'USD',
-          longName: 'Test Connectivity Stock'
-        };
-        return res.json(dummy);
-      }
-
-      // Try-catch specifically for the YF library call to prevent route crash
-      let quote: any = null;
-      try {
-        logToFile(`STAGING: Fetching quote for ${symbol}`);
-        quote = await yfInstance.quote(symbol);
-      } catch (yfErr: any) {
-        logToFile(`YAHOO LIB ERROR (quote) for ${symbol}: ${yfErr.message}`);
-
-        // WORKAROUND: Direct Fetch Fallback
-        try {
-          logToFile(`FALLBACK: Attempting direct fetch for ${symbol}`);
-          const res = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`);
-          const data: any = await res.json();
-          const result = data?.quoteResponse?.result?.[0];
-          if (result) {
-            logToFile(`FALLBACK SUCCESS: Found data for ${symbol}`);
-            quote = result;
-          }
-        } catch (fallbackErr: any) {
-          logToFile(`FALLBACK FAILED for ${symbol}: ${fallbackErr.message}`);
-        }
-
-        if (!quote) {
-          return res.status(200).json({
-            warning: `بيانات السهم غير متوفرة حالياً لـ ${symbol}`,
-            symbol: symbol,
-            regularMarketPrice: 0,
-            currency: '---'
-          });
-        }
-      }
+      const response = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`);
+      const data: any = await response.json();
+      const quote = data?.quoteResponse?.result?.[0];
 
       if (!quote) {
-        logToFile(`DEBUG: Quote not found for ${symbol}`);
-        return res.status(200).json({
-          warning: "السهم غير موجود",
-          symbol: symbol,
-          regularMarketPrice: 0,
-          currency: '---'
+        return res.json({
+          warning: "بيانات غير متوفرة",
+          symbol,
+          regularMarketPrice: 0
         });
       }
-
-      logToFile(`DEBUG: Quote found for ${symbol}: ${quote.regularMarketPrice}`);
       return res.json(quote);
     } catch (error: any) {
-      logToFile(`CRITICAL ROUTE ERROR (quote) for ${req.params.symbol}: ${error.message}`);
-      return res.status(500).json({ error: "خطأ داخلي في معالجة طلب السهم" });
+      return res.json({ warning: "خطأ اتصال", symbol, regularMarketPrice: 0 });
     }
   });
 
@@ -164,40 +97,30 @@ async function startServer() {
 
     try {
       const { symbol } = req.params;
-      const { period1 } = req.query;
-      logToFile(`DEBUG: Fetching history (via chart) for: ${symbol}`);
+      logToFile(`DEBUG: Fetching raw history for: ${symbol}`);
 
-      const p1 = period1 ? new Date(Number(period1) * 1000) : new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
+      const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=6mo`);
+      const data: any = await response.json();
+      const result = data?.chart?.result?.[0];
 
-      // yf.chart is more robust for historical data in non-US markets
-      const chartResult = await yfInstance.chart(symbol, {
-        period1: p1,
-        interval: "1d",
-      });
+      if (!result) return res.json([]);
 
-      const formatted = (chartResult.quotes || []).map(q => ({
-        date: q.date,
-        open: q.open,
-        high: q.high,
-        low: q.low,
-        close: q.close,
-        volume: q.volume
+      const timestamps = result.timestamp || [];
+      const quotes = result.indicators.quote[0];
+      const formatted = timestamps.map((ts: number, i: number) => ({
+        date: ts * 1000,
+        open: quotes.open[i],
+        high: quotes.high[i],
+        low: quotes.low[i],
+        close: quotes.close[i],
+        volume: quotes.volume[i]
       }));
 
-      logToFile(`DEBUG: History (chart) retrieved for ${symbol}, count: ${formatted.length}`);
+      logToFile(`DEBUG: Raw History retrieved for ${symbol}, count: ${formatted.length}`);
       return res.json(formatted);
     } catch (error: any) {
-      logToFile(`YAHOO ERROR (history/chart) for ${req.params.symbol}: ${error.message}`);
-      // Fallback to historical() if chart fails
-      try {
-        const hist = await yfInstance.historical(req.params.symbol, {
-          period1: req.query.period1 ? new Date(Number(req.query.period1) * 1000) : new Date(Date.now() - 180 * 24 * 60 * 60 * 1000),
-          interval: "1d"
-        });
-        return res.json(hist);
-      } catch (e2) {
-        return res.json([]);
-      }
+      logToFile(`RAW HISTORY ERROR for ${req.params.symbol}: ${error.message}`);
+      return res.json([]);
     }
   });
 
