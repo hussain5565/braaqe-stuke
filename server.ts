@@ -38,109 +38,112 @@ process.on("unhandledRejection", (reason: any) => {
   logToFile(`CRITICAL ERROR UNHANDLED REJECTION: ${reason?.message || reason}`);
 });
 
-async function startServer() {
-  logToFile("startServer() CALLED");
-  const app = express();
-  const PORT = 3000;
+const app = express();
+const PORT = 3000;
 
-  // Global logging middleware
-  app.use((req, res, next) => {
-    logToFile(`REQUEST: ${req.method} ${req.url}`);
-    next();
-  });
+app.use(express.json());
 
-  // Global API headers
-  app.use("/api", (req, res, next) => {
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    logToFile(`API REQUEST: ${req.method} ${req.url}`);
-    next();
-  });
+// Global logging middleware
+app.use((req, res, next) => {
+  logToFile(`REQUEST: ${req.method} ${req.url}`);
+  next();
+});
 
-  // API Route: Test quote
-  app.get("/api/test", async (req, res) => {
-    try {
-      const resp = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL`);
-      const data: any = await resp.json();
-      res.json({ status: 'connected', price: data?.quoteResponse?.result?.[0]?.regularMarketPrice });
-    } catch (e: any) {
-      res.status(500).json({ status: 'error', message: e.message });
+// Global API headers
+app.use("/api", (req, res, next) => {
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  logToFile(`API REQUEST: ${req.method} ${req.url}`);
+  next();
+});
+
+// API Route: Test quote
+app.get("/api/test", async (req, res) => {
+  try {
+    const resp = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL`);
+    const data: any = await resp.json();
+    res.json({ status: 'connected', price: data?.quoteResponse?.result?.[0]?.regularMarketPrice });
+  } catch (e: any) {
+    res.status(500).json({ status: 'error', message: e.message });
+  }
+});
+
+// API Route: Fetch Stock Quote
+app.get("/api/quote/:symbol", async (req, res) => {
+  const { symbol } = req.params;
+  logToFile(`>>> QUOTE FETCH: ${symbol}`);
+  try {
+    const response = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`);
+    const data: any = await response.json();
+    const quote = data?.quoteResponse?.result?.[0];
+
+    if (!quote) {
+      return res.json({
+        warning: "بيانات غير متوفرة",
+        symbol,
+        regularMarketPrice: 0
+      });
     }
-  });
+    return res.json(quote);
+  } catch (error: any) {
+    return res.json({ warning: "خطأ اتصال", symbol, regularMarketPrice: 0 });
+  }
+});
 
-  // API Route: Fetch Stock Quote
-  app.get("/api/quote/:symbol", async (req, res) => {
+// API Route: Fetch Historical Data
+app.get("/api/history/:symbol", async (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+
+  try {
     const { symbol } = req.params;
-    logToFile(`>>> QUOTE FETCH: ${symbol}`);
-    try {
-      const response = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`);
-      const data: any = await response.json();
-      const quote = data?.quoteResponse?.result?.[0];
+    logToFile(`DEBUG: Fetching raw history for: ${symbol}`);
 
-      if (!quote) {
-        return res.json({
-          warning: "بيانات غير متوفرة",
-          symbol,
-          regularMarketPrice: 0
-        });
-      }
-      return res.json(quote);
-    } catch (error: any) {
-      return res.json({ warning: "خطأ اتصال", symbol, regularMarketPrice: 0 });
-    }
-  });
+    const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=6mo`);
+    const data: any = await response.json();
+    const result = data?.chart?.result?.[0];
 
-  // API Route: Fetch Historical Data
-  app.get("/api/history/:symbol", async (req, res) => {
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    if (!result) return res.json([]);
 
-    try {
-      const { symbol } = req.params;
-      logToFile(`DEBUG: Fetching raw history for: ${symbol}`);
+    const timestamps = result.timestamp || [];
+    const quotes = result.indicators.quote[0];
+    const formatted = timestamps.map((ts: number, i: number) => ({
+      date: ts * 1000,
+      open: quotes.open[i],
+      high: quotes.high[i],
+      low: quotes.low[i],
+      close: quotes.close[i],
+      volume: quotes.volume[i]
+    }));
 
-      const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=6mo`);
-      const data: any = await response.json();
-      const result = data?.chart?.result?.[0];
+    logToFile(`DEBUG: Raw History retrieved for ${symbol}, count: ${formatted.length}`);
+    return res.json(formatted);
+  } catch (error: any) {
+    logToFile(`RAW HISTORY ERROR for ${req.params.symbol}: ${error.message}`);
+    return res.json([]);
+  }
+});
 
-      if (!result) return res.json([]);
+// API Route: Fetch Company News
+app.get("/api/news/:symbol", async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    logToFile(`DEBUG: Fetching raw news for: ${symbol}`);
+    const resp = await fetch(`https://query1.finance.yahoo.com/v1/finance/search?q=${symbol}`);
+    const data: any = await resp.json();
+    res.json(data.news || []);
+  } catch (error: any) {
+    logToFile("Error fetching news: " + error.message);
+    res.json([]);
+  }
+});
 
-      const timestamps = result.timestamp || [];
-      const quotes = result.indicators.quote[0];
-      const formatted = timestamps.map((ts: number, i: number) => ({
-        date: ts * 1000,
-        open: quotes.open[i],
-        high: quotes.high[i],
-        low: quotes.low[i],
-        close: quotes.close[i],
-        volume: quotes.volume[i]
-      }));
+// Catch-all for undefined /api routes
+app.all("/api/*", (req, res) => {
+  res.status(404).json({ error: "الرابط المطلوب غير موجود في النظام" });
+});
 
-      logToFile(`DEBUG: Raw History retrieved for ${symbol}, count: ${formatted.length}`);
-      return res.json(formatted);
-    } catch (error: any) {
-      logToFile(`RAW HISTORY ERROR for ${req.params.symbol}: ${error.message}`);
-      return res.json([]);
-    }
-  });
-
-  // API Route: Fetch Company News
-  app.get("/api/news/:symbol", async (req, res) => {
-    try {
-      const { symbol } = req.params;
-      const result: any = await yfInstance.search(symbol, { newsCount: 5 });
-      res.json(result.news || []);
-    } catch (error: any) {
-      logToFile("Error fetching news: " + error.message);
-      res.status(500).json({ error: "تعذر جلب الأخبار" });
-    }
-  });
-
-  // Catch-all for undefined /api routes
-  app.all("/api/*", (req, res) => {
-    res.status(404).json({ error: "الرابط المطلوب غير موجود في النظام" });
-  });
-
+async function startServer() {
   logToFile("Registering middleware...");
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
@@ -168,4 +171,10 @@ async function startServer() {
   });
 }
 
-startServer();
+// Export for Vercel
+export default app;
+
+// Start server for local/container development
+if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
+  startServer();
+}
