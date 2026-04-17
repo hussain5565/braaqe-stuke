@@ -2,11 +2,8 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import * as yfModule from "yahoo-finance2";
+import yf from "yahoo-finance2";
 import fs from "fs";
-
-// Robust initialization for yahoo-finance2
-const yf: any = (yfModule as any).default || yfModule;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,7 +45,7 @@ async function startServer() {
 
   logToFile("Registering routes...");
   // Health check route
-  app.get("/v1/api/health", (req, res) => {
+  app.get("/api/health", (req, res) => {
     logToFile("HEALTH CHECK CALLED");
     res.set("Content-Type", "application/json");
     res.json({ status: "ok", time: new Date().toISOString() });
@@ -56,16 +53,16 @@ async function startServer() {
 
   // Logging Middleware
   app.use((req, res, next) => {
-    if (req.url.startsWith('/v1/api')) {
+    if (req.url.startsWith('/api')) {
       logToFile(`INCOMING REQUEST: ${req.method} ${req.url}`);
     }
     next();
   });
 
   // API Route: Fetch Stock Quote
-  app.get("/v1/api/quote/:symbol", async (req, res) => {
+  app.get("/api/quote/:symbol", async (req, res) => {
     const { symbol } = req.params;
-    console.log(`[SERVER] API Request: /v1/api/quote/${symbol}`);
+    console.log(`[SERVER] API Request: /api/quote/${symbol}`);
     // Explicitly set JSON content type first
     res.setHeader("Content-Type", "application/json");
 
@@ -136,7 +133,7 @@ async function startServer() {
   });
 
   // API Route: Fetch Historical Data
-  app.get("/v1/api/history/:symbol", async (req, res) => {
+  app.get("/api/history/:symbol", async (req, res) => {
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
 
@@ -180,7 +177,7 @@ async function startServer() {
   });
 
   // API Route: Fetch Company News
-  app.get("/v1/api/news/:symbol", async (req, res) => {
+  app.get("/api/news/:symbol", async (req, res) => {
     try {
       const { symbol } = req.params;
       const result: any = await yf.search(symbol, { newsCount: 5 });
@@ -191,15 +188,8 @@ async function startServer() {
     }
   });
 
-  // Compatibility layer for old /api routes (in case of browser cache)
-  app.get("/api/:type/:symbol", (req, res) => {
-    const { type, symbol } = req.params;
-    logToFile(`COMPAT REDIRECT: /api/${type}/${symbol} -> /v1/api/${type}/${symbol}`);
-    res.redirect(307, `/v1/api/${type}/${symbol}${req.url.includes('?') ? '?' + req.url.split('?')[1] : ''}`);
-  });
-
-  // Catch-all for undefined /v1/api routes
-  app.all("/v1/api/*", (req, res) => {
+  // Catch-all for undefined /api routes
+  app.all("/api/*", (req, res) => {
     res.status(404).json({ error: "الرابط المطلوب غير موجود في النظام" });
   });
 

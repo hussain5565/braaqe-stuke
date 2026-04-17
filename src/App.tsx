@@ -221,7 +221,7 @@ function Dashboard() {
 
     try {
       const encodedSymbol = encodeURIComponent(s);
-      const qResponse = await fetch(`/v1/api/quote/${encodedSymbol}`);
+      const qResponse = await fetch(`/api/quote/${encodedSymbol}`);
       
       if (!qResponse.ok) {
         const errorText = await qResponse.text();
@@ -255,7 +255,7 @@ function Dashboard() {
       // Fetch History independently
       try {
         const sixMonthsAgo = Math.floor(Date.now() / 1000) - (180 * 24 * 60 * 60);
-        const hRes = await fetch(`/v1/api/history/${encodedSymbol}?period1=${sixMonthsAgo}`);
+        const hRes = await fetch(`/api/history/${encodedSymbol}?period1=${sixMonthsAgo}`);
         if (hRes.ok) {
           const hData = await hRes.json();
           if (Array.isArray(hData)) {
@@ -281,7 +281,7 @@ function Dashboard() {
 
       // Fetch News independently
       try {
-        const nRes = await fetch(`/v1/api/news/${s}`);
+        const nRes = await fetch(`/api/news/${s}`);
         if (nRes.ok) {
           const nData = await nRes.json();
           setNews(nData);
