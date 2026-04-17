@@ -220,11 +220,18 @@ function Dashboard() {
     const isStaticHost = window.location.hostname.includes('web.app') || window.location.hostname.includes('firebaseapp.com');
 
     try {
-      const encodedSymbol = encodeURIComponent(s);
       const qResponse = await fetch(`/v1/api/quote/${encodedSymbol}`);
       
+      if (!qResponse.ok) {
+        const errorText = await qResponse.text();
+        console.error("Server API Error:", qResponse.status, errorText);
+        throw new Error(`خطأ في السيرفر (${qResponse.status}): تعذر جلب بيانات السهم.`);
+      }
+
       const contentType = qResponse.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
+        const text = await qResponse.text();
+        console.error("Non-JSON Response Catch:", text.substring(0, 100));
         if (isStaticHost) {
           throw new Error("تنبيه: أنت تستخدم نسخة العرض المستضافة. يرجى فتح التطبيق من داخل AI Studio لرؤية البيانات الحقيقية.");
         }
