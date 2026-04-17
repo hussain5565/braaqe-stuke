@@ -5,9 +5,8 @@ import { fileURLToPath } from "url";
 import * as yfModule from "yahoo-finance2";
 import fs from "fs";
 
-const yahooFinance: any = (yfModule as any).default || yfModule;
-// Create instance if needed
-const yf = (typeof yahooFinance === 'function') ? new yahooFinance() : yahooFinance;
+// Robust initialization for yahoo-finance2
+const yf: any = (yfModule as any).default || yfModule;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,7 +18,10 @@ function logToFile(msg: string) {
 }
 
 logToFile("--- NEW STARTUP ---");
-logToFile(`DEBUG: yf check: ${typeof yf.quote === 'function' ? 'OK' : 'FAIL'}`);
+logToFile(`DEBUG: yf check: ${yf && typeof yf.quote === 'function' ? 'OK' : 'FAIL'}`);
+if (yf && !yf.quote) {
+  logToFile(`DEBUG: yf keys: ${Object.keys(yf).join(', ')}`);
+}
 
 logToFile("SERVER STARTING...");
 
@@ -62,21 +64,22 @@ async function startServer() {
 
   // API Route: Fetch Stock Quote
   app.get("/v1/api/quote/:symbol", async (req, res) => {
+    const { symbol } = req.params;
+    console.log(`[SERVER] API Request: /v1/api/quote/${symbol}`);
     // Explicitly set JSON content type first
     res.setHeader("Content-Type", "application/json");
-    
+
+    logToFile(`>>> API CALL: quote for ${symbol}`);
+
     try {
-      const { symbol } = req.params;
-      logToFile(`DEBUG: Fetching quote for: ${symbol}`);
-      
       if (symbol === 'TEST') {
-        const dummy = { 
-          symbol: 'TEST', 
-          regularMarketPrice: 123.45, 
+        const dummy = {
+          symbol: 'TEST',
+          regularMarketPrice: 123.45,
           regularMarketChange: 1.25,
           regularMarketChangePercent: 1.02,
-          currency: 'USD', 
-          longName: 'Test Connectivity Stock' 
+          currency: 'USD',
+          longName: 'Test Connectivity Stock'
         };
         return res.json(dummy);
       }
@@ -86,44 +89,44 @@ async function startServer() {
       try {
         logToFile(`STAGING: Fetching quote for ${symbol}`);
         quote = await yf.quote(symbol);
-        
+
         // Fallback for Saudi stocks if they return undefined or missing data
         if (!quote || !quote.regularMarketPrice) {
           logToFile(`DEBUG: Quote missing data for ${symbol}, trying search...`);
           const search = await yf.search(symbol);
           const found = search.quotes?.find((q: any) => q.symbol === symbol);
           if (found) {
-             quote = {
-                symbol: symbol,
-                regularMarketPrice: found.prevClose || found.price || 0,
-                shortName: found.shortname,
-                longName: found.longname,
-                currency: found.currency || 'SAR',
-                regularMarketChangePercent: 0,
-                regularMarketChange: 0
-             };
+            quote = {
+              symbol: symbol,
+              regularMarketPrice: found.prevClose || found.price || 0,
+              shortName: found.shortname,
+              longName: found.longname,
+              currency: found.currency || 'SAR',
+              regularMarketChangePercent: 0,
+              regularMarketChange: 0
+            };
           }
         }
       } catch (yfErr: any) {
         logToFile(`YAHOO LIB ERROR (quote) for ${symbol}: ${yfErr.message}`);
-        return res.status(200).json({ 
+        return res.status(200).json({
           warning: `بيانات السهم غير متوفرة حالياً لـ ${symbol}`,
           symbol: symbol,
           regularMarketPrice: 0,
           currency: '---'
         });
       }
-      
+
       if (!quote) {
         logToFile(`DEBUG: Quote not found for ${symbol}`);
-        return res.status(200).json({ 
+        return res.status(200).json({
           warning: "السهم غير موجود",
           symbol: symbol,
           regularMarketPrice: 0,
           currency: '---'
         });
       }
-      
+
       logToFile(`DEBUG: Quote found for ${symbol}: ${quote.regularMarketPrice}`);
       return res.json(quote);
     } catch (error: any) {
@@ -136,12 +139,12 @@ async function startServer() {
   app.get("/v1/api/history/:symbol", async (req, res) => {
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    
+
     try {
       const { symbol } = req.params;
       const { period1 } = req.query;
       logToFile(`DEBUG: Fetching history (via chart) for: ${symbol}`);
-      
+
       const p1 = period1 ? new Date(Number(period1) * 1000) : new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
 
       // yf.chart is more robust for historical data in non-US markets
@@ -165,13 +168,13 @@ async function startServer() {
       logToFile(`YAHOO ERROR (history/chart) for ${req.params.symbol}: ${error.message}`);
       // Fallback to historical() if chart fails
       try {
-         const hist = await yf.historical(req.params.symbol, {
-           period1: req.query.period1 ? new Date(Number(req.query.period1) * 1000) : new Date(Date.now() - 180 * 24 * 60 * 60 * 1000),
-           interval: "1d"
-         });
-         return res.json(hist);
+        const hist = await yf.historical(req.params.symbol, {
+          period1: req.query.period1 ? new Date(Number(req.query.period1) * 1000) : new Date(Date.now() - 180 * 24 * 60 * 60 * 1000),
+          interval: "1d"
+        });
+        return res.json(hist);
       } catch (e2) {
-         return res.json([]);
+        return res.json([]);
       }
     }
   });

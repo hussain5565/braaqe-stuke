@@ -220,6 +220,7 @@ function Dashboard() {
     const isStaticHost = window.location.hostname.includes('web.app') || window.location.hostname.includes('firebaseapp.com');
 
     try {
+      const encodedSymbol = encodeURIComponent(s);
       const qResponse = await fetch(`/v1/api/quote/${encodedSymbol}`);
       
       if (!qResponse.ok) {
