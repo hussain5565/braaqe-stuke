@@ -399,6 +399,21 @@ function Dashboard() {
           </div>
 
           <div className="flex items-center gap-4">
+            <button 
+              onClick={async () => {
+                try {
+                  const res = await fetch('/api/test-quote/AAPL');
+                  const data = await res.json();
+                  alert(`Test Result: ${data.source} - ${data.data?.regularMarketPrice || 'No Price'}`);
+                } catch (e: any) {
+                  alert(`Test Error: ${e.message}`);
+                }
+              }}
+              className="text-[10px] font-mono border border-border-custom hover:border-accent-blue px-3 py-1 rounded-full text-text-muted"
+            >
+              اختبار الاتصال
+            </button>
+
             {user ? (
               <div className="flex items-center gap-3 ml-4 bg-surface border border-border-custom pl-4 py-1 rounded-full">
                 <img 

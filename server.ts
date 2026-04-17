@@ -14,10 +14,18 @@ function logToFile(msg: string) {
   fs.appendFileSync(logFile, `[${timestamp}] ${msg}\n`);
 }
 
+// In some environments, especially with tsx/esm, we might need to handle the import differently
+// However, the "Call new YahooFinance() first" error implies we are calling a method on the class
+// rather than an instance. v3 should provide a default instance.
+// Let's try to detect and fix.
+const yahooFinance = (yf as any).default || yf;
+logToFile(`DEBUG: yf type: ${typeof yahooFinance}, is function: ${typeof yahooFinance === 'function'}`);
+const yfInstance = (typeof yahooFinance === 'function') ? new (yahooFinance as any)() : yahooFinance;
+
 logToFile("--- NEW STARTUP ---");
-logToFile(`DEBUG: yf check: ${yf && typeof yf.quote === 'function' ? 'OK' : 'FAIL'}`);
-if (yf && !yf.quote) {
-  logToFile(`DEBUG: yf keys: ${Object.keys(yf).join(', ')}`);
+logToFile(`DEBUG: yf check: ${yfInstance && typeof yfInstance.quote === 'function' ? 'OK' : 'FAIL'}`);
+if (yfInstance && !yfInstance.quote) {
+  logToFile(`DEBUG: yf keys: ${Object.keys(yfInstance).join(', ')}`);
 }
 
 logToFile("SERVER STARTING...");
@@ -44,6 +52,23 @@ async function startServer() {
   app.use(express.json());
 
   logToFile("Registering routes...");
+  // API Route: Test Quote (direct to YF or Fallback)
+  app.get("/api/test-quote/:symbol", async (req, res) => {
+    const { symbol } = req.params;
+    try {
+      const q = await yfInstance.quote(symbol);
+      res.json({ source: 'yfInstance', data: q });
+    } catch (e: any) {
+      try {
+        const fallbackRes = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`);
+        const data: any = await fallbackRes.json();
+        res.json({ source: 'direct-fetch', data: data?.quoteResponse?.result?.[0] });
+      } catch (e2: any) {
+        res.status(500).json({ error: e.message, fallbackError: e2.message });
+      }
+    }
+  });
+
   // Health check route
   app.get("/api/health", (req, res) => {
     logToFile("HEALTH CHECK CALLED");
@@ -65,6 +90,7 @@ async function startServer() {
     console.log(`[SERVER] API Request: /api/quote/${symbol}`);
     // Explicitly set JSON content type first
     res.setHeader("Content-Type", "application/json");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
 
     logToFile(`>>> API CALL: quote for ${symbol}`);
 
@@ -85,33 +111,32 @@ async function startServer() {
       let quote: any = null;
       try {
         logToFile(`STAGING: Fetching quote for ${symbol}`);
-        quote = await yf.quote(symbol);
-
-        // Fallback for Saudi stocks if they return undefined or missing data
-        if (!quote || !quote.regularMarketPrice) {
-          logToFile(`DEBUG: Quote missing data for ${symbol}, trying search...`);
-          const search = await yf.search(symbol);
-          const found = search.quotes?.find((q: any) => q.symbol === symbol);
-          if (found) {
-            quote = {
-              symbol: symbol,
-              regularMarketPrice: found.prevClose || found.price || 0,
-              shortName: found.shortname,
-              longName: found.longname,
-              currency: found.currency || 'SAR',
-              regularMarketChangePercent: 0,
-              regularMarketChange: 0
-            };
-          }
-        }
+        quote = await yfInstance.quote(symbol);
       } catch (yfErr: any) {
         logToFile(`YAHOO LIB ERROR (quote) for ${symbol}: ${yfErr.message}`);
-        return res.status(200).json({
-          warning: `بيانات السهم غير متوفرة حالياً لـ ${symbol}`,
-          symbol: symbol,
-          regularMarketPrice: 0,
-          currency: '---'
-        });
+
+        // WORKAROUND: Direct Fetch Fallback
+        try {
+          logToFile(`FALLBACK: Attempting direct fetch for ${symbol}`);
+          const res = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`);
+          const data: any = await res.json();
+          const result = data?.quoteResponse?.result?.[0];
+          if (result) {
+            logToFile(`FALLBACK SUCCESS: Found data for ${symbol}`);
+            quote = result;
+          }
+        } catch (fallbackErr: any) {
+          logToFile(`FALLBACK FAILED for ${symbol}: ${fallbackErr.message}`);
+        }
+
+        if (!quote) {
+          return res.status(200).json({
+            warning: `بيانات السهم غير متوفرة حالياً لـ ${symbol}`,
+            symbol: symbol,
+            regularMarketPrice: 0,
+            currency: '---'
+          });
+        }
       }
 
       if (!quote) {
@@ -145,7 +170,7 @@ async function startServer() {
       const p1 = period1 ? new Date(Number(period1) * 1000) : new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
 
       // yf.chart is more robust for historical data in non-US markets
-      const chartResult = await yf.chart(symbol, {
+      const chartResult = await yfInstance.chart(symbol, {
         period1: p1,
         interval: "1d",
       });
@@ -165,7 +190,7 @@ async function startServer() {
       logToFile(`YAHOO ERROR (history/chart) for ${req.params.symbol}: ${error.message}`);
       // Fallback to historical() if chart fails
       try {
-        const hist = await yf.historical(req.params.symbol, {
+        const hist = await yfInstance.historical(req.params.symbol, {
           period1: req.query.period1 ? new Date(Number(req.query.period1) * 1000) : new Date(Date.now() - 180 * 24 * 60 * 60 * 1000),
           interval: "1d"
         });
@@ -180,7 +205,7 @@ async function startServer() {
   app.get("/api/news/:symbol", async (req, res) => {
     try {
       const { symbol } = req.params;
-      const result: any = await yf.search(symbol, { newsCount: 5 });
+      const result: any = await yfInstance.search(symbol, { newsCount: 5 });
       res.json(result.news || []);
     } catch (error: any) {
       logToFile("Error fetching news: " + error.message);
